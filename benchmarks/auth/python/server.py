@@ -25,6 +25,8 @@ import sys
 
 import tracing
 
+from flask import Flask, request
+
 LAMBDA = os.environ.get('IS_LAMBDA', 'no').lower() in ['true', 'yes', '1']
 
 if not LAMBDA:
@@ -105,14 +107,25 @@ if LAMBDA:
             return msg
 
 
+app = Flask(__name__)
+
+@app.route('/')
+def index():
+    token = request.args.get('name', 'avontz')
+    fakeMethodArn = "arn:aws:execute-api:{regionId}:{accountId}:{apiId}/{stage}/{httpVerb}/[{resource}/[{child-resources}]]"
+    msg = do_authentication(token, fakeMethodArn)
+    return msg
+
 def serve():
-    server = grpc.server(futures.ThreadPoolExecutor(max_workers=1))
-    auth_pb2_grpc.add_GreeterServicer_to_server(Greeter(), server)
-    address = (args.addr + ":" + args.port)
-    server.add_insecure_port(address)
+    # server = grpc.server(futures.ThreadPoolExecutor(max_workers=1))
+    # auth_pb2_grpc.add_GreeterServicer_to_server(Greeter(), server)
+    port = int(os.environ.get('PORT', '50051'))
+    address = (args.addr + ":" + str(port))
+    # server.add_insecure_port(address)
     print("Start Auth-python server. Addr: " + address)
-    server.start()
-    server.wait_for_termination()
+    app.run(host = args.addr, port=port)
+    # server.start()
+    # server.wait_for_termination()
 
 def lambda_handler(event, context):
     authObj = Auth()

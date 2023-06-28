@@ -21,7 +21,7 @@ all_lambda_image: $(ALL_LAMBDA_IMAGES)
 
 auth-python-image: docker/Dockerfile python/server.py
 	DOCKER_BUILDKIT=1 docker buildx build \
-	--tag $(DOCKER_HUB_ACCOUNT)/auth-python:latest \
+	--tag dev.local/auth-python:latest \
 	--target authPython \
 	-f docker/Dockerfile \
 	$(ROOT) --load
@@ -29,7 +29,7 @@ auth-python-image: docker/Dockerfile python/server.py
 
 auth-nodejs-image: docker/Dockerfile nodejs/server.js
 	DOCKER_BUILDKIT=1 docker buildx build \
-	--tag $(DOCKER_HUB_ACCOUNT)/auth-nodejs:latest \
+	--tag dev.local/auth-nodejs:latest \
 	--target authNodeJS \
 	-f docker/Dockerfile \
 	$(ROOT) --load
