@@ -20,6 +20,8 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+const express = require('express');
+
 // Include process module
 const process = require('process');
 const tracing = require('tracing')
@@ -83,7 +85,7 @@ function parsArgs() {
     .epilog("copyright 2022");
 
   var addr = "0.0.0.0";
-  var port = "50051";
+  var port = process.env.PORT || "50051";
   var zipkin = "http://localhost:9411/api/v2/spans";
 
   if ('addr' in argv) { addr = argv.addr; }
@@ -157,8 +159,8 @@ function showEncryption(call, callback) {
     span = new tracing.Span()
   }
 
-  var plaintext = call.request.plaintext_message
-  if (call.request.plaintext_message == "" || call.request.plaintext_message == "world") {
+  var plaintext = call.query.plaintext_message
+  if (call.query.plaintext_message == "" || call.query.plaintext_message == "world") {
     plaintext = default_plaintext
   }
   const ciphertext = AESModeCTR(plaintext)
@@ -187,17 +189,28 @@ function main() {
       process.stdout.write(`Tracing disabled\n`);
     }
 
-    var server = new grpc.Server();
-    server.addService(hello_proto.Aes.service, { showEncryption: showEncryption });
-    address = `${addr}:${port}`
-    server.bindAsync(
-      address,
-      grpc.ServerCredentials.createInsecure(),
-      (err, port) => {
-        process.stdout.write(`Start AES-nodejs. Listen on ${address}\n`);
-        server.start();
-      }
-    );
+    var app = express();
+    app.get('/', (req, res) => {
+      //res.send("hi");
+	showEncryption(req, (err, result) => {
+          res.send(result);
+      });
+    })
+    app.listen(port, () => {
+      console.log(`Start AES-nodejs. Listen on 0.0.0.0:${port}\n`);
+    })
+
+    // var server = new grpc.Server();
+    // server.addService(hello_proto.Aes.service, { showEncryption: showEncryption });
+    // address = `${addr}:${port}`
+    // server.bindAsync(
+    //   address,
+    //   grpc.ServerCredentials.createInsecure(),
+    //   (err, port) => {
+    //     process.stdout.write(`Start AES-nodejs. Listen on ${address}\n`);
+    //     server.start();
+    //   }
+    // );
   }
 }
 

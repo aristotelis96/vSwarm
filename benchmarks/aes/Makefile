@@ -43,7 +43,7 @@ all_lambda_image: $(ALL_LAMBDA_IMAGES)
 
 aes-python-image: docker/Dockerfile python/server.py
 	DOCKER_BUILDKIT=1 docker buildx build \
-	--tag vhiveease/aes-python:latest \
+	--tag dev.local/vhiveease/aes-python:latest \
 	--target aesPython \
 	-f docker/Dockerfile \
 	$(ROOT) --load
@@ -51,7 +51,7 @@ aes-python-image: docker/Dockerfile python/server.py
 
 aes-nodejs-image: docker/Dockerfile nodejs/server.js
 	DOCKER_BUILDKIT=1 docker buildx build --progress=plain \
-	--tag vhiveease/aes-nodejs:latest \
+	--tag dev.local/vhiveease/aes-nodejs:latest \
 	--target aesNodeJS \
 	-f docker/Dockerfile \
 	$(ROOT) --load

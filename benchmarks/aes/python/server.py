@@ -26,6 +26,7 @@ import sys
 import tracing
 
 import pyaes
+from flask import Flask, request
 
 LAMBDA = os.environ.get('IS_LAMBDA', 'no').lower() in ['true', 'yes', '1']
 
@@ -83,14 +84,26 @@ if LAMBDA:
             msg = f"fn: AES | plaintext: {plaintext} | ciphertext: {ciphertext} | runtime: Python"
             return msg
 
+app = Flask(__name__)
+@app.route('/')
+def index():
+    print("Received call...")
+    plaintext = request.args.get('plaintext_message', args.default_plaintext)
+
+    ciphertext = AESModeCTR(plaintext)
+    msg = f"fn: AES | plaintext: {plaintext} | ciphertext: {ciphertext} | runtime: Python"
+    return msg
+
 def serve():
-    server = grpc.server(futures.ThreadPoolExecutor(max_workers=1))
-    aes_pb2_grpc.add_AesServicer_to_server(Aes(), server)
-    address = (args.addr + ":" + args.port)
-    server.add_insecure_port(address)
+    #server = grpc.server(futures.ThreadPoolExecutor(max_workers=1))
+    #aes_pb2_grpc.add_AesServicer_to_server(Aes(), server)
+    port = int(os.environ.get('PORT', '50051'))
+    address = (args.addr + ":" + str(port))
+    #server.add_insecure_port(address)
     print("Start AES-python server. Addr: " + address)
-    server.start()
-    server.wait_for_termination()
+    #server.start()
+    app.run(host=args.addr, port=port)
+    #server.wait_for_termination()
 
 def lambda_handler(event, context):
     aesObj = Aes()
