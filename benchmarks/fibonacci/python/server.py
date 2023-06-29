@@ -32,6 +32,8 @@ import string
 from proto.fibonacci import fibonacci_pb2
 import fibonacci_pb2_grpc
 
+from flask import Flask, request
+
 import os
 import sys
 
@@ -82,18 +84,31 @@ class Greeter(fibonacci_pb2_grpc.GreeterServicer):
         msg = "fn: Fib: y = fib(x) | x: %i y: %.1f | runtime: python" % (x,y)
         return fibonacci_pb2.HelloReply(message=msg)
 
+app = Flask(__name__)
+
+@app.route('/')
+def index():
+    x = int(request.args.get('num', 'avontz'))
+    y = fibonacci(x)
+    msg = "fn: Fib: y = fib(x) | x: %i y: %.1f | runtime: python" % (x,y)
+    return msg
+
 
 def serve():
-    server = grpc.server(futures.ThreadPoolExecutor(max_workers=1))
-    fibonacci_pb2_grpc.add_GreeterServicer_to_server(Greeter(), server)
+    port = int(os.environ.get('PORT', '50051'))
+    print("Start fibonacci server Addr: 0.0.0.0:" + str(port))
 
-    address = ('[::]:' + GRPC_PORT_ADDRESS if GRPC_PORT_ADDRESS else  '[::]:50051')
-    server.add_insecure_port(address) 
+    app.run(host='0.0.0.0', port=port)
+    # server = grpc.server(futures.ThreadPoolExecutor(max_workers=1))
+    # fibonacci_pb2_grpc.add_GreeterServicer_to_server(Greeter(), server)
 
-    logging.info("Start server: listen on : " + address)
+    # address = ('[::]:' + GRPC_PORT_ADDRESS if GRPC_PORT_ADDRESS else  '[::]:50051')
+    # server.add_insecure_port(address) 
 
-    server.start()
-    server.wait_for_termination()
+    # logging.info("Start server: listen on : " + address)
+
+    # server.start()
+    # server.wait_for_termination()
 
 
 if __name__ == '__main__':
