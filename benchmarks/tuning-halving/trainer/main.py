@@ -47,11 +47,12 @@ import tracing
 from storage import Storage
 import tuning_pb2_grpc
 import tuning_pb2
-import destination as XDTdst
-import source as XDTsrc
-import utils as XDTutil
+# import destination as XDTdst
+# import source as XDTsrc
+# import utils as XDTutil
 
-
+from flask import Flask, request, jsonify
+import requests
 
 from concurrent import futures
 
@@ -70,6 +71,7 @@ if tracing.IsTracingEnabled():
     tracing.grpcInstrumentServer()
 
 INLINE = "INLINE"
+DOCKER_VOLUME = "DOCKER_VOLUME"
 S3 = "S3"
 XDT = "XDT"
 storageBackend = None
@@ -168,10 +170,71 @@ class TrainerServicer(tuning_pb2_grpc.TrainerServicer):
         )
 
 
+class TrainerFlask():
+    def Train(self, request):
+        # Read from S3
+        dataset = pickle.loads(storageBackend.get(request["dataset_key"]))
+
+        with tracing.Span("Training a model"):
+            model_config = request["model_config"]
+            sample_rate = request["sample_rate"]
+            count = request["count"]
+
+            # Init model
+            model_class = model_dispatcher(model_config['model'])
+            model = model_class(**model_config['params'])
+
+            # Train model and get predictions
+            X = dataset['features']
+            y = dataset['labels']
+            if sample_rate==1.0:
+                X_sampled, y_sampled = X, y
+            else:
+                stratified_split = StratifiedShuffleSplit(n_splits=1, train_size=sample_rate, random_state=42)
+                sampled_index, _ = list(stratified_split.split(X, y))[0]
+                X_sampled, y_sampled = X[sampled_index], y[sampled_index]
+            y_pred = cross_val_predict(model, X_sampled, y_sampled, cv=5)
+            model.fit(X_sampled, y_sampled)
+            score = roc_auc_score(y_sampled, y_pred)
+            log.info(f"{model_config['model']}, params: {model_config['params']}, dataset size: {len(y_sampled)},score: {score}")
+
+        # Write to S3
+        model_key = f"model_{count}"
+        pred_key = f"pred_model_{count}"
+        model_key = storageBackend.put(model_key, pickle.dumps(model))
+        pred_key = storageBackend.put(pred_key, pickle.dumps(y_pred))
+
+        return {
+            'model_key': model_key,
+            'pred_key': pred_key,
+            'score': score,
+            'params': model_config,
+        }
+
+
+app = Flask(__name__)
+
+servicer = TrainerFlask()
+
+@app.route('/train', methods=['POST'])
+def index():
+    data = request.get_json()
+
+    reply = servicer.Train(data)
+    return reply
+
 def serve():
-    transferType = os.getenv('TRANSFER_TYPE', S3)
-    if transferType == S3:
-        global storageBackend
+    transferType = os.getenv('TRANSFER_TYPE', DOCKER_VOLUME)
+    global storageBackend
+    if transferType == DOCKER_VOLUME:
+        storageBackend = Storage()
+        
+        addr = "0.0.0.0"
+        port = int(os.environ.get('PORT', '50052'))
+        address = (addr + ":" + str(port))
+        print("Start driver server. Addr: " + address)
+        app.run(host = addr, port=port)
+    elif transferType == S3:
         storageBackend = Storage(BUCKET_NAME)
         log.info("Using inline or s3 transfers")
         max_workers = int(os.getenv("MAX_SERVER_THREADS", 10))

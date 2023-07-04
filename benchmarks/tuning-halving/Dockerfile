@@ -33,17 +33,17 @@ COPY ./utils/storage/python/storage.py ./
 COPY ./benchmarks/tuning-halving/${target}/* ./
 COPY ./benchmarks/tuning-halving/proto/tuning_pb2* ./
 COPY ./benchmarks/tuning-halving/proto/helloworld_pb2* ./
-RUN --mount=type=secret,id=GOPRIVATE_KEY \
-        git config --global url."https://ease-lab:$(cat /run/secrets/GOPRIVATE_KEY)@github.com/ease-lab/vhive-xdt".insteadOf "https://github.com/ease-lab/vhive-xdt"
-RUN git clone --depth 1 https://github.com/ease-lab/vhive-xdt /xdt
+# RUN --mount=type=secret,id=GOPRIVATE_KEY \
+#         git config --global url."https://ease-lab:$(cat /run/secrets/GOPRIVATE_KEY)@github.com/ease-lab/vhive-xdt".insteadOf "https://github.com/ease-lab/vhive-xdt"
+# RUN git clone --depth 1 https://github.com/ease-lab/vhive-xdt /xdt
 
 FROM vhiveease/python-slim:latest
 COPY --from=builder /root/.local /root/.local
 COPY --from=builder /py /app
-COPY --from=builder /xdt/sdk/python/ /app
-COPY --from=builder /xdt/proto/downXDT/ /app
-COPY --from=builder /xdt/proto/upXDT/ /app
-COPY --from=builder /xdt/proto/crossXDT/ /app
+# COPY --from=builder /xdt/sdk/python/ /app
+# COPY --from=builder /xdt/proto/downXDT/ /app
+# COPY --from=builder /xdt/proto/upXDT/ /app
+# COPY --from=builder /xdt/proto/crossXDT/ /app
 WORKDIR /app
 ENV PATH=/root/.local/bin:$PATH
 ENTRYPOINT ["python3", "-u", "./main.py"]

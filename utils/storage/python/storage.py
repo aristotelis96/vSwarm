@@ -26,14 +26,17 @@ import sys
 import logging as log
 
 LAMBDA = os.environ.get('IS_LAMBDA', 'no').lower() in ['true', 'yes', '1']
-TRANSFER = os.environ.get('TRANSFER_TYPE', 'S3')
+TRANSFER = os.environ.get('TRANSFER_TYPE', 'DOCKER_VOLUME')
 
-supportedTransfers = ['S3', 'ELASTICACHE', 'XDT']
+supportedTransfers = ['S3', 'ELASTICACHE', 'XDT', 'DOCKER_VOLUME']
 if TRANSFER not in supportedTransfers:
     errmsg = "Error in Environment Variable TRANSFER_TYPE: "
     errmsg += "TRANSFER_TYPE should contain one of " + str(supportedTransfers)
     sys.exit(errmsg)
 
+if TRANSFER == 'DOCKER_VOLUME':
+    import pickle
+    
 if TRANSFER == 'S3':
     import boto3
 
@@ -47,7 +50,7 @@ if TRANSFER == 'XDT':
 
 
 class Storage:
-    def __init__(self, bucket, transferConfig=None):
+    def __init__(self, bucket=None, transferConfig=None):
         self.bucket = bucket
         if TRANSFER == 'S3':
             if LAMBDA:
@@ -81,7 +84,9 @@ class Storage:
             self.elasticache_client.set(key, obj)
         elif TRANSFER == 'XDT':
             key = self.XDTclient.Put(payload=obj)
-
+        elif TRANSFER == 'DOCKER_VOLUME':
+            with open("/data/" + key, 'wb') as f:
+                f.write(obj)
         return key
 
     def get(self, key):
@@ -96,3 +101,7 @@ class Storage:
             return response
         elif TRANSFER == 'XDT':
             return XDTdst.Get(key, self.XDTconfig)
+        elif TRANSFER == 'DOCKER_VOLUME':
+            with open("/data/" + key, 'rb') as f:
+                loaded_data = f.read()
+            return loaded_data

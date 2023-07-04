@@ -22,6 +22,10 @@
 
 from __future__ import print_function
 
+from flask import Flask, request, jsonify
+import requests
+import json
+
 import sys
 import os
 
@@ -35,9 +39,9 @@ import helloworld_pb2_grpc
 import helloworld_pb2
 import tuning_pb2_grpc
 import tuning_pb2
-import destination as XDTdst
-import source as XDTsrc
-import utils as XDTutil
+# import destination as XDTdst
+# import source as XDTsrc
+# import utils as XDTutil
 
 import grpc
 from grpc_reflection.v1alpha import reflection
@@ -74,6 +78,7 @@ if tracing.IsTracingEnabled():
     tracing.grpcInstrumentServer()
 
 INLINE = "INLINE"
+DOCKER_VOLUME = "DOCKER_VOLUME"
 S3 = "S3"
 XDT = "XDT"
 storageBackend = None
@@ -215,10 +220,104 @@ class GreeterServicer(helloworld_pb2_grpc.GreeterServicer):
         return helloworld_pb2.HelloReply(message=self.benchName)
 
 
+
+class FlaskDriver():    
+    def handler_broker(self):
+        dataset = generate_dataset()
+        hyperparam_config = {
+            'model': 'RandomForestRegressor',
+            'params': {
+                'n_estimators': [5, 10, 20],
+                'min_samples_split': [2, 4],
+                'random_state': [42]
+            }
+        }
+        models_config = {
+            'models': [
+                {
+                    'model': 'RandomForestRegressor',
+                    'params': hyperparam
+                } for hyperparam in generate_hyperparam_sets(hyperparam_config['params'])
+            ]
+        }
+        key = storageBackend.put('dataset_key', pickle.dumps(dataset))
+        return {
+            'dataset_key': key,
+            'models_config': models_config
+        }
+
+    def train(self, arg: dict) -> dict:
+        log.info("Invoke Trainer with flask")
+        
+        data = {
+            'dataset_key': "dataset_key",
+            'model_config': (arg['model_config']),
+            'count': arg['count'],
+            'sample_rate': arg['sample_rate']
+        }
+        response = requests.post('http://172.17.0.3:50052/train', json=data)
+        return response.json()
+
+    # Driver code below
+    def ProcessRequest(self):
+        log.info("Driver received a request")
+
+        event = self.handler_broker()
+        models = event['models_config']['models']
+
+        while len(models)>1:
+            sample_rate = 1/len(models)
+            log.info(f"Running {len(models)} models on the dataset with sample rate {sample_rate} ")
+            # Run different model configs on sampled dataset
+            training_responses = []
+            for count, model_config in enumerate(models):
+                training_responses.append(
+                    self.train({
+                        'dataset_key': event['dataset_key'],
+                        'model_config': model_config,
+                        'count': count,
+                        'sample_rate': sample_rate
+                    })
+                )
+
+            # Keep models with the best score
+            top_number = len(training_responses)//2
+            sorted_responses = sorted(training_responses, key=lambda result: result['score'], reverse=True)
+            models = [resp['params'] for resp in sorted_responses[:top_number]]
+
+        log.info(f"Training final model {models[0]} on the full dataset")
+        final_response = self.train({
+            'dataset_key': event['dataset_key'],
+            'model_config': models[0],
+            'count': 0,
+            'sample_rate': 1.0
+        })
+
+        log.info(f"Final result: score {final_response['score']}, model {final_response['params']['model']} ")
+        return f"Final result: score {final_response['score']}, model {final_response['params']['model']} "
+
+app = Flask(__name__)
+driver = FlaskDriver()
+
+
+@app.route('/')
+def index():
+    return driver.ProcessRequest()
+
 def serve():
-    transferType = os.getenv('TRANSFER_TYPE', S3)
-    if transferType == S3:
-        global storageBackend
+    transferType = os.getenv('TRANSFER_TYPE', DOCKER_VOLUME)
+    print("TransferType is: {}".format(transferType))
+    global storageBackend
+    if transferType == DOCKER_VOLUME: 
+        # Docker volume dataset
+        storageBackend = Storage()
+
+        addr = "0.0.0.0"
+        port = int(os.environ.get('PORT', '50051'))
+        address = (addr + ":" + str(port))
+        print("Start driver server. Addr: " + address)
+        app.run(host = addr, port=port)
+    elif transferType == S3:
         storageBackend = Storage(BUCKET_NAME)
         log.info("Using inline or s3 transfers")
         max_workers = int(os.getenv("MAX_SERVER_THREADS", 10))

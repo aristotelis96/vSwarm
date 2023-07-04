@@ -38,19 +38,21 @@ all-image: driver-image trainer-image
 
 all-image-push: driver-image-push trainer-image-push
 
+clean: 
+	docker rm -f $$(docker ps -a -q --filter ancestor=dev.local/vhiveease/tuning-halving-trainer:latest); true && docker rmi dev.local/vhiveease/tuning-halving-trainer:latest || true
+	docker rm -f $$(docker ps -a -q --filter ancestor=dev.local/vhiveease/tuning-halving-driver:latest); true && docker rmi dev.local/vhiveease/tuning-halving-driver:latest || true
+
 driver-image: Dockerfile proto/tuning_pb2_grpc.py proto/tuning_pb2.py driver/main.py
 	docker buildx build $(PLATFORM) \
-	-t vhiveease/tuning-halving-driver:latest \
+	-t dev.local/vhiveease/tuning-halving-driver:latest \
 	--build-arg target_arg=driver \
-	--secret id=GOPRIVATE_KEY \
 	-f Dockerfile \
 	$(ROOT) $(MODE)
 
 trainer-image: Dockerfile proto/tuning_pb2_grpc.py proto/tuning_pb2.py trainer/main.py
 	docker buildx build $(PLATFORM) \
-	-t vhiveease/tuning-halving-trainer:latest \
+	-t dev.local/vhiveease/tuning-halving-trainer:latest \
 	--build-arg target_arg=trainer \
-	--secret id=GOPRIVATE_KEY \
 	-f Dockerfile \
 	$(ROOT) $(MODE)
 
