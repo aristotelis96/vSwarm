@@ -248,14 +248,16 @@ class FlaskDriver():
 
     def train(self, arg: dict) -> dict:
         log.info("Invoke Trainer with flask")
-        
+        headers = {
+            "Host": "trainer.default.example.com"
+        }
         data = {
             'dataset_key': "dataset_key",
             'model_config': (arg['model_config']),
             'count': arg['count'],
             'sample_rate': arg['sample_rate']
         }
-        response = requests.post('http://172.17.0.3:50052/train', json=data)
+        response = requests.post(args.tAddr + "/train", json=data, headers=headers)        
         return response.json()
 
     # Driver code below

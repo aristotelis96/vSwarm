@@ -1,0 +1,10 @@
+1) kubectl apply -f shared-volume-pv.yaml # create PersistentVolume
+
+2) kubectl apply -f shared-volume-pvc.yaml # create PersistentVolumeClaim
+
+3) enable pvc at configMap: namespace knative-service, config-features:
+    kubernetes.podspec-persistent-volume-claim: enabled
+    kubernetes.podspec-persistent-volume-write: enabled
+
+
+4) kubectl apply-f driver/trainer

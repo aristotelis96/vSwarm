@@ -1,0 +1,56 @@
+# MIT License
+#
+# Copyright (c) 2021 Michal Baczun and EASE lab
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: driver
+  namespace: default
+spec:
+  template:
+    metadata:
+      annotations:
+        # prevent cold boots
+        autoscaling.knative.dev/minScale: "1"
+        autoscaling.knative.dev/maxScale: "1"
+    spec:
+      containerConcurrency: 1
+      containers:
+        - image: dev.local/vhiveease/tuning-halving-driver:latest
+          imagePullPolicy: Never
+          args: ["-tAddr", "http://10.102.0.114"] # clusterIP of courier (which we also call when calling localhost:31080. Portforwards to this service). Flask Driver server internally passes the trainer host as header to the kourier service.
+          env:
+            - name: TRANSFER_TYPE
+              value: "DOCKER_VOLUME"
+            - name: ENABLE_TRACING
+              value: "false"
+          ports:
+            - containerPort: 80
+          volumeMounts:
+            - name: tuning-halving-shared
+              mountPath: /data
+              readOnly: false
+      volumes:
+        - name: tuning-halving-shared
+          persistentVolumeClaim:
+            claimName: tuning-halving-shared-volume-pvc
+            readOnly: false
