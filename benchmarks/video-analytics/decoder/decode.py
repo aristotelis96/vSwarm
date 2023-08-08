@@ -30,11 +30,15 @@ sys.path.insert(0, os.getcwd() + '/../proto/')
 sys.path.insert(0, os.getcwd() + '/../../../../utils/tracing/python')
 sys.path.insert(0, os.getcwd() + '/../../../../utils/storage/python')
 import tracing
-import videoservice_pb2_grpc
-import videoservice_pb2
-import destination as XDTdst
-import source as XDTsrc
-import utils as XDTutil
+# import videoservice_pb2_grpc
+# import videoservice_pb2
+# import destination as XDTdst
+# import source as XDTsrc
+# import utils as XDTutil
+
+from flask import Flask, request, jsonify
+import requests
+
 
 import cv2
 import grpc
@@ -64,6 +68,7 @@ if tracing.IsTracingEnabled():
 INLINE = "INLINE"
 S3 = "S3"
 XDT = "XDT"
+DOCKER_VOLUME = "DOCKER_VOLUME"
 storageBackend = None
 
 def decode(bytes):
@@ -94,32 +99,24 @@ def get_self_ip():
     return IP
 
 
-class VideoDecoderServicer(videoservice_pb2_grpc.VideoDecoderServicer):
-    def __init__(self, transferType, XDTconfig=None):
 
+class VideoDecoderFlask():
+    def __init__(self):
         self.frameCount = 0
-        self.transferType = transferType
-        if transferType == XDT:
-            if XDTconfig is None:
-                log.fatal("Empty XDT config")
-            self.XDTconfig = XDTconfig
-            self.XDTclient = XDTsrc.XDTclient(config=XDTconfig)
-
-    def Decode(self, request, context):
+        self.transferType = DOCKER_VOLUME 
+    
+    def Decode(self, request):
         log.info("Decoder recieved a request")
 
         videoBytes = b''
-        if self.transferType == S3:
-            log.info("Using s3, getting bucket")
-            with tracing.Span("Video fetch"):
-                videoBytes = storageBackend.get(request.s3key)
-            log.info("decoding frames of the s3 object")
-        elif self.transferType == INLINE:
-            log.info("Inline video decode. Decoding frames.")
-            videoBytes = request.video
+        if self.transferType == DOCKER_VOLUME:
+            log.info("Using docker volume, getting file")
+            videoBytes = storageBackend.get(request["key"])
         results = self.processFrames(videoBytes)
-        return videoservice_pb2.DecodeReply(classification=results)
-
+        return {
+            'classification': results
+        }
+        
     def processFrames(self, videoBytes):
         frames = decode(videoBytes)
         with tracing.Span("Recognise all frames"):
@@ -142,57 +139,47 @@ class VideoDecoderServicer(videoservice_pb2_grpc.VideoDecoderServicer):
             return results
 
     def Recognise(self, frame):
-        channel = grpc.insecure_channel(args.addr)
-        stub = videoservice_pb2_grpc.ObjectRecognitionStub(channel)
         result = b''
-        if self.transferType == S3:
+        if self.transferType == DOCKER_VOLUME:
             name = "decoder-frame-" + str(self.frameCount) + ".jpg"
             with tracing.Span("Upload frame"):
                 self.frameCount += 1
-                storageBackend.put(name, pickle.dumps(frame))
-            log.info("calling recog with s3 key")
-            response = stub.Recognise(videoservice_pb2.RecogniseRequest(s3key=name))
+                key = storageBackend.put(name, pickle.dumps(frame))
+            log.info("calling recog with key")
+            data = {
+                'key': key
+            }
+            headers = {
+                # "Host": "trainer.default.example.com"
+            }
+            response = requests.post(args.tAddr, json=data, headers=headers)
             result = response.classification
-        elif self.transferType == INLINE:
-            response = stub.Recognise(videoservice_pb2.RecogniseRequest(frame=frame))
-            result = response.classification
-        elif self.transferType == XDT:
-            xdtPayload = XDTutil.Payload(FunctionName="HelloXDT", Data=frame)
-            if not args.dockerCompose:
-                log.info("replacing SQP hostname")
-                self.XDTconfig["SQPServerHostname"] = get_self_ip()
-            response_bytes, ok = self.XDTclient.Invoke(URL=args.addr, xdtPayload=xdtPayload)
-            # convert response bytes to string
-            result = response_bytes.decode()
+        
+app = Flask(__name__)
 
-        return result
+servicer = VideoDecoderFlask()
+
+@app.route('/', methods=['POST'])
+def index():
+    log.info("RECEIVED post request")
+    data = request.get_json()
+    log.info(data)
+    reply = servicer.Decode(data)
+    log.info(reply)
+    return reply
 
 def serve():
-    transferType = os.getenv('TRANSFER_TYPE', INLINE)
-    if transferType == S3:
+    transferType = os.getenv('TRANSFER_TYPE', DOCKER_VOLUME)
+    if transferType == DOCKER_VOLUME:
         from storage import Storage
-        bucketName = os.getenv('BUCKET_NAME', 'vhive-video-bench')
         global storageBackend
-        storageBackend = Storage(bucketName)
-    if transferType == S3 or transferType == INLINE:
-        max_workers = int(os.getenv("MAX_DECODER_SERVER_THREADS", 10))
-        server = grpc.server(futures.ThreadPoolExecutor(max_workers=max_workers))
-        videoservice_pb2_grpc.add_VideoDecoderServicer_to_server(
-            VideoDecoderServicer(transferType=transferType), server)
-        server.add_insecure_port('[::]:'+args.sp)
-        server.start()
-        server.wait_for_termination()
-    elif transferType == XDT:
-        XDTconfig = XDTutil.loadConfig()
-        log.info("[decode] transfering via XDT")
-        log.info(XDTconfig)
+        storageBackend = Storage()
 
-        def handler(videoBytes):
-            decoderService = VideoDecoderServicer(transferType=transferType, XDTconfig=XDTconfig)
-            results = decoderService.processFrames(videoBytes)
-            return results.encode(), True
-
-        XDTdst.StartDstServer(XDTconfig, handler)
+        addr = "0.0.0.0"
+        port = int(os.environ.get('PORT', '8081'))
+        address = (addr + ":" + str(port))
+        print("Start driver server. Addr: " + address)
+        app.run(host = addr, port=port)    
     else:
         log.fatal("Invalid Transfer type")
 

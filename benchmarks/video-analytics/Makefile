@@ -30,11 +30,10 @@ all-image: decoder-image recog-image streaming-image
 
 all-image-push: decoder-image-push recog-image-push streaming-image-push
 
-decoder-image: Dockerfile proto/videoservice_pb2_grpc.py proto/videoservice_pb2.py decoder/decode.py
+decoder-image: Dockerfile decoder/decode.py
 	DOCKER_BUILDKIT=1 docker build \
-	-t vhiveease/video-analytics-decoder:latest \
+	-t dev.local/vhiveease/video-analytics-decoder:latest \
 	--target decode \
-	--secret id=GOPRIVATE_KEY \
 	-f Dockerfile \
 	$(ROOT)
 

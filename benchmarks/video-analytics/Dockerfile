@@ -54,9 +54,6 @@ COPY ./utils/tracing/python/tracing.py ./
 COPY ./utils/storage/python/storage.py ./
 COPY ./benchmarks/video-analytics/decoder/decode.py ./
 RUN mkdir frames
-COPY ./benchmarks/video-analytics/proto/videoservice_pb2_grpc.py ./
-COPY ./benchmarks/video-analytics/proto/videoservice_pb2.py ./
-RUN --mount=type=secret,id=GOPRIVATE_KEY git clone --depth 1 https://$(cat /run/secrets/GOPRIVATE_KEY)@github.com/ease-lab/vhive-xdt /xdt
 
 FROM vhiveease/python-slim:latest as decode
 RUN apt update && apt-get install ffmpeg libsm6 libxext6  -y
