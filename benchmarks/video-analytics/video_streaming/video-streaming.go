@@ -28,19 +28,15 @@ import (
 	"fmt"
 	"net"
 	"os"
-
-	"google.golang.org/grpc/credentials/insecure"
+	"os/exec"
+	"bytes"
+	"net/http"
+	"encoding/json"
 
 	ctrdlog "github.com/containerd/containerd/log"
 	log "github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
-
-	pb_video "tests/video_analytics/proto"
-
-	sdk "github.com/ease-lab/vhive-xdt/sdk/golang"
-	"github.com/ease-lab/vhive-xdt/utils"
-	pb_helloworld "github.com/vhive-serverless/vSwarm/examples/protobuf/helloworld"
 
 	storage "github.com/vhive-serverless/vSwarm/utils/storage/go"
 	tracing "github.com/vhive-serverless/vSwarm/utils/tracing/go"
@@ -56,16 +52,18 @@ const (
 	INLINE = "INLINE"
 	XDT    = "XDT"
 	S3     = "S3"
+	DOCKER_VOLUME = "DOCKER_VOLUME"
 )
 
 type server struct {
 	decoderAddr    string
 	decoderPort    int
 	transferType   string
-	config         utils.Config
-	XDTclient      *sdk.XDTclient
 	storageBackend storage.Storage
-	pb_helloworld.UnimplementedGreeterServer
+}
+
+type responseMessage struct { 
+	response string
 }
 
 func fetchSelfIP() string {
@@ -99,67 +97,117 @@ func uploadToS3(ctx context.Context, storageBackend storage.Storage) {
 	log.Infof("[Video Streaming] Uploaded video to s3")
 }
 
+func uploadToVolume(ctx context.Context, storageBackend storage.Storage) string {
+	file, err := os.Open(*videoFile)
+	if err != nil {
+		log.Fatalf("[Video Streaming] Failed to open file: %s", err)
+	}
+	key := storageBackend.PutFile("streaming-video.mp4", file)
+	log.Infof("[Video Streaming] Uploaded to volume")
+	return key
+}
+
 // SayHello implements the helloworld interface. Used to trigger the video streamer to start the benchmark.
-func (s *server) SayHello(ctx context.Context, req *pb_helloworld.HelloRequest) (_ *pb_helloworld.HelloReply, err error) {
-	// Become a client of the decoder function and send the video:
-	// establish a connection
-	addr := fmt.Sprintf("%v:%v", s.decoderAddr, s.decoderPort)
-	log.Infof("[Video Streaming] Using addr: %v", addr)
+// func (s *server) SayHello(ctx context.Context, req *pb_helloworld.HelloRequest) (_ *pb_helloworld.HelloReply, err error) {
+// 	// Become a client of the decoder function and send the video:
+// 	// establish a connection
+// 	addr := fmt.Sprintf("%v:%v", s.decoderAddr, s.decoderPort)
+// 	log.Infof("[Video Streaming] Using addr: %v", addr)
 
-	// send message
-	log.Infof("[Video Streaming] Video Fragment length: %v", len(videoFragment))
+// 	// send message
+// 	log.Infof("[Video Streaming] Video Fragment length: %v", len(videoFragment))
 
-	var reply *pb_video.DecodeReply
-	var response string
-	if s.transferType == XDT {
-		payloadToSend := utils.Payload{
-			FunctionName: "HelloXDT",
-			Data:         videoFragment,
-		}
-		if message, _, err := (*s.XDTclient).Invoke(ctx, addr, payloadToSend); err != nil {
-			log.Fatalf("SQP_to_dQP_data_transfer failed %v", err)
-		} else {
-			response = string(message)
-		}
-	} else if s.transferType == S3 || s.transferType == INLINE {
-		var conn *grpc.ClientConn
-		if tracing.IsTracingEnabled() {
-			conn, err = tracing.DialGRPCWithUnaryInterceptor(addr, grpc.WithBlock(), grpc.WithTransportCredentials(insecure.NewCredentials()))
-		} else {
-			conn, err = grpc.Dial(addr, grpc.WithBlock(), grpc.WithTransportCredentials(insecure.NewCredentials()))
-		}
-		if err != nil {
-			log.Fatalf("[Video Streaming] Failed to dial decoder: %s", err)
-		}
-		defer conn.Close()
+// 	var reply *pb_video.DecodeReply
+// 	var response string
+// 	if s.transferType == XDT {
+// 		payloadToSend := utils.Payload{
+// 			FunctionName: "HelloXDT",
+// 			Data:         videoFragment,
+// 		}
+// 		if message, _, err := (*s.XDTclient).Invoke(ctx, addr, payloadToSend); err != nil {
+// 			log.Fatalf("SQP_to_dQP_data_transfer failed %v", err)
+// 		} else {
+// 			response = string(message)
+// 		}
+// 	} else if s.transferType == S3 || s.transferType == INLINE {
+// 		var conn *grpc.ClientConn
+// 		if tracing.IsTracingEnabled() {
+// 			conn, err = tracing.DialGRPCWithUnaryInterceptor(addr, grpc.WithBlock(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+// 		} else {
+// 			conn, err = grpc.Dial(addr, grpc.WithBlock(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+// 		}
+// 		if err != nil {
+// 			log.Fatalf("[Video Streaming] Failed to dial decoder: %s", err)
+// 		}
+// 		defer conn.Close()
 
-		client := pb_video.NewVideoDecoderClient(conn)
-		if s.transferType == S3 {
-			// upload video to s3
-			uploadToS3(ctx, s.storageBackend)
-			// issue request
-			reply, err = client.Decode(ctx, &pb_video.DecodeRequest{S3Key: "streaming-video.mp4"})
-		} else {
-			reply, err = client.Decode(ctx, &pb_video.DecodeRequest{Video: videoFragment})
-		}
-		if err != nil {
-			log.Fatalf("[Video Streaming] Failed to send video to decoder: %s", err)
-		}
-		response = reply.Classification
-	} else {
-		log.Fatalf("Invalid TRANSFER_TYPE value")
+// 		client := pb_video.NewVideoDecoderClient(conn)
+// 		if s.transferType == S3 {
+// 			// upload video to s3
+// 			uploadToS3(ctx, s.storageBackend)
+// 			// issue request
+// 			reply, err = client.Decode(ctx, &pb_video.DecodeRequest{S3Key: "streaming-video.mp4"})
+// 		} else {
+// 			reply, err = client.Decode(ctx, &pb_video.DecodeRequest{Video: videoFragment})
+// 		}
+// 		if err != nil {
+// 			log.Fatalf("[Video Streaming] Failed to send video to decoder: %s", err)
+// 		}
+// 		response = reply.Classification
+// 	} else {
+// 		log.Fatalf("Invalid TRANSFER_TYPE value")
+// 	}
+
+// 	log.Infof("[Video Streaming] Received Decoder reply")
+// 	return &pb_helloworld.HelloReply{Message: response}, err
+// }
+
+
+func (s *server) httpHandler(w http.ResponseWriter, r *http.Request) {
+	// Create a new context for the request
+	ctx := r.Context()
+
+	key := uploadToVolume(ctx, s.storageBackend)
+	// Create a JSON payload with a single parameter
+	payload := []byte(`{"key": ` + key + `}`)
+
+	// Make the HTTP POST request
+	response, err := http.Post("http://localhost:8081", "application/json", bytes.NewBuffer(payload))
+	if err != nil {
+		fmt.Println("Error:", err)
+		return
+	}
+	defer response.Body.Close()
+
+	if err != nil {
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
 	}
 
-	log.Infof("[Video Streaming] Received Decoder reply")
-	return &pb_helloworld.HelloReply{Message: response}, err
+	// Marshal the message into JSON
+	responseJSON, err := json.Marshal(response)
+	if err != nil {
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+
+	// Set the response headers
+	w.Header().Set("Content-Type", "application/json")
+
+	// Write the response
+	_, err = w.Write(responseJSON)
+	if err != nil {
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
 }
 
 func main() {
 	debug := flag.Bool("d", false, "Debug level in logs")
-	dockerCompose := flag.Bool("dockerCompose", false, "Execution env")
+	// dockerCompose := flag.Bool("dockerCompose", false, "Execution env")
 	decoderAddr := flag.String("addr", "decoder.default.svc.cluster.local", "Decoder address")
-	decoderPort := flag.Int("p", 80, "Decoder port")
-	servePort := flag.Int("sp", 80, "Port listened to by this streamer")
+	decoderPort := flag.Int("p", 8081, "Decoder port")
+	servePort := flag.Int("sp", 8080, "Port listened to by this streamer")
 	videoFile = flag.String("video", "reference/video.mp4", "The file location of the video")
 	zipkin := flag.String("zipkin", "http://zipkin.istio-system.svc.cluster.local:9411/api/v2/spans", "zipkin url")
 	flag.Parse()
@@ -184,11 +232,11 @@ func main() {
 	}
 	videoFragment, _ = os.ReadFile(*videoFile)
 	log.Infof("read video fragment, size: %v\n", len(videoFragment))
-	// server setup: listen on port.
-	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", *servePort))
-	if err != nil {
-		log.Fatalf("failed to listen: %v", err)
-	}
+	// // server setup: listen on port.
+	// lis, err := net.Listen("tcp", fmt.Sprintf(":%d", *servePort))
+	// if err != nil {
+	// 	log.Fatalf("failed to listen: %v", err)
+	// }
 
 	var grpcServer *grpc.Server
 	if tracing.IsTracingEnabled() {
@@ -202,14 +250,17 @@ func main() {
 	server.decoderAddr = *decoderAddr
 	server.decoderPort = *decoderPort
 
-	server.transferType = INLINE
+	server.transferType = DOCKER_VOLUME
 	if transferType, ok := os.LookupEnv("TRANSFER_TYPE"); !ok {
-		server.transferType = INLINE
+		server.transferType = DOCKER_VOLUME
 	} else {
 		server.transferType = transferType
 	}
 
-	if server.transferType == S3 {
+	if server.transferType == DOCKER_VOLUME {
+		storageBackend := storage.New("DOCKER_VOLUME", "")
+		server.storageBackend = storageBackend
+	} else if server.transferType == S3 {
 		if value, ok := os.LookupEnv("BUCKET_NAME"); ok {
 			AWS_S3_BUCKET = value
 		}
@@ -217,24 +268,29 @@ func main() {
 		storageBackend := storage.New("S3", AWS_S3_BUCKET)
 		server.storageBackend = storageBackend
 	} else if server.transferType == XDT {
-		log.Infof("[streaming] TransferType = %s", server.transferType)
-		config := utils.ReadConfig()
-		log.Info(config)
-		if !*dockerCompose {
-			config.SQPServerHostname = fetchSelfIP()
-		}
-		xdtClient, err := sdk.NewXDTclient(config)
-		if err != nil {
-			log.Fatalf("InitXDT failed %v", err)
-		}
+		// log.Infof("[streaming] TransferType = %s", server.transferType)
+		// config := utils.ReadConfig()
+		// log.Info(config)
+		// if !*dockerCompose {
+		// 	config.SQPServerHostname = fetchSelfIP()
+		// }
+		// xdtClient, err := sdk.NewXDTclient(config)
+		// if err != nil {
+		// 	log.Fatalf("InitXDT failed %v", err)
+		// }
 
-		server.config = config
-		server.XDTclient = xdtClient
-		log.Infof("[streaming] XDT client created")
+		// server.config = config
+		// server.XDTclient = xdtClient
+		// log.Infof("[streaming] XDT client created")
 	}
-	pb_helloworld.RegisterGreeterServer(grpcServer, &server)
+	http.HandleFunc("/", server.httpHandler)
+	addr := fmt.Sprintf("0.0.0.0:%d", *servePort)
 
-	if err := grpcServer.Serve(lis); err != nil {
-		log.Fatalf("failed to serve: %v", err)
+	// Start the HTTP server
+	log.Infof("Server is listening on %s...\n", addr)
+	err := http.ListenAndServe(addr, nil)
+	if err != nil {
+		log.Fatalf("Error starting server: %s\n", err)
 	}
+
 }

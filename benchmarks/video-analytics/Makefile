@@ -46,11 +46,10 @@ recog-image: Dockerfile proto/videoservice_pb2_grpc.py proto/videoservice_pb2.py
 	-f Dockerfile \
 	$(ROOT)
 
-streaming-image: Dockerfile proto/videoservice_grpc.pb.go proto/videoservice.pb.go video_streaming/video-streaming.go video_streaming/reference/video.mp4
+streaming-image: Dockerfile video_streaming/video-streaming.go video_streaming/reference/video.mp4
 	DOCKER_BUILDKIT=1 docker build \
-	-t vhiveease/video-analytics-streaming:latest \
+	-t dev.local/vhiveease/video-analytics-streaming:latest \
 	--target streaming \
-	--secret id=GOPRIVATE_KEY \
 	-f Dockerfile \
 	$(ROOT)
 
