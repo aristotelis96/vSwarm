@@ -34,7 +34,7 @@ all_image: $(ALL_IMAGES)
 
 fibonacci-python-image:  Dockerfile python/server.py
 	DOCKER_BUILDKIT=1 docker build \
-	--tag $(DOCKER_HUB_ACCOUNT)/fibonacci-python:latest \
+	--tag dev.local/vhiveease/fibonacci-python:latest \
 	--target fibonacciPython \
 	-f ./Dockerfile \
 	$(ROOT)

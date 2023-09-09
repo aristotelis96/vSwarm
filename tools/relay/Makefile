@@ -32,7 +32,7 @@ relay:
 relay-docker:
 	DOCKER_BUILDKIT=1 \
 	docker build \
-	--tag vhiveease/relay:latest \
+	--tag dev.local/vhiveease/relay:latest \
 	--target relay \
 	-f Dockerfile \
 	$(ROOT)

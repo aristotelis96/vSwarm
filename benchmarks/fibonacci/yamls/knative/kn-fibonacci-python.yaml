@@ -29,7 +29,8 @@ spec:
   template:
     spec:
       containers:
-        - image: docker.io/vhiveease/relay:latest
+        - image: dev.local/vhiveease/relay
+          imagePullPolicy: Never
           ports:
             - name: h2c
               containerPort: 50000
@@ -42,7 +43,8 @@ spec:
             - --generator=linear
             - --lowerBound=1
             - --upperBound=10
-        - image: docker.io/vhiveease/fibonacci-python:latest
+        - image: dev.local/vhiveease/fibonacci-python
+          imagePullPolicy: Never
           args:
             - --addr=0.0.0.0
             - --port=50051
