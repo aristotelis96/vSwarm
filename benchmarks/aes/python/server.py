@@ -24,6 +24,7 @@ import os
 import sys
 
 import tracing
+from grpc_reflection.v1alpha import reflection
 
 import pyaes
 
@@ -84,10 +85,17 @@ if LAMBDA:
             return msg
 
 def serve():
-    server = grpc.server(futures.ThreadPoolExecutor(max_workers=1))
+    server = grpc.server(futures.ThreadPoolExecutor(max_workers=2))
     aes_pb2_grpc.add_AesServicer_to_server(Aes(), server)
     address = (args.addr + ":" + args.port)
     server.add_insecure_port(address)
+    
+    SERVICE_NAMES = (
+        aes_pb2.DESCRIPTOR.services_by_name['Aes'].full_name,
+        reflection.SERVICE_NAME,
+    )
+    reflection.enable_server_reflection(SERVICE_NAMES, server)
+    
     print("Start AES-python server. Addr: " + address)
     server.start()
     server.wait_for_termination()
