@@ -35,9 +35,9 @@ import helloworld_pb2_grpc
 import helloworld_pb2
 import tuning_pb2_grpc
 import tuning_pb2
-import destination as XDTdst
-import source as XDTsrc
-import utils as XDTutil
+# import destination as XDTdst
+# import source as XDTsrc
+# import utils as XDTutil
 
 import grpc
 from grpc_reflection.v1alpha import reflection
@@ -76,6 +76,7 @@ if tracing.IsTracingEnabled():
 INLINE = "INLINE"
 S3 = "S3"
 XDT = "XDT"
+DOCKER_VOLUME = "DOCKER_VOLUME"
 storageBackend = None
 
 # set aws credentials:
@@ -150,11 +151,19 @@ class GreeterServicer(helloworld_pb2_grpc.GreeterServicer):
                 } for hyperparam in generate_hyperparam_sets(hyperparam_config['params'])
             ]
         }
-        key = storageBackend.put('dataset_key', pickle.dumps(dataset))
-        return {
-            'dataset_key': key,
-            'models_config': models_config
-        }
+        if self.transferType != INLINE:
+            key = storageBackend.put('dataset_key', pickle.dumps(dataset))
+            return {
+                'dataset': b'',
+                'dataset_key': key,
+                'models_config': models_config
+            }
+        else:
+            return {
+                'dataset': pickle.dumps(dataset),
+                'dataset_key': INLINE,
+                'models_config': models_config
+            }
 
     def train(self, arg: dict) -> dict:
         log.info("Invoke Trainer")
@@ -162,7 +171,7 @@ class GreeterServicer(helloworld_pb2_grpc.GreeterServicer):
         stub = tuning_pb2_grpc.TrainerStub(channel)
 
         resp = stub.Train(tuning_pb2.TrainRequest(
-            dataset=b'',  # via S3/XDT only
+            dataset=arg['dataset'],  # via S3/XDT only
             dataset_key="dataset_key",
             model_config=pickle.dumps(arg['model_config']),
             count=arg['count'],
@@ -191,6 +200,7 @@ class GreeterServicer(helloworld_pb2_grpc.GreeterServicer):
             for count, model_config in enumerate(models):
                 training_responses.append(
                     self.train({
+                        'dataset': event['dataset'],
                         'dataset_key': event['dataset_key'],
                         'model_config': model_config,
                         'count': count,
@@ -205,6 +215,7 @@ class GreeterServicer(helloworld_pb2_grpc.GreeterServicer):
 
         log.info(f"Training final model {models[0]} on the full dataset")
         final_response = self.train({
+            'dataset': event['dataset'],
             'dataset_key': event['dataset_key'],
             'model_config': models[0],
             'count': 0,
@@ -216,21 +227,25 @@ class GreeterServicer(helloworld_pb2_grpc.GreeterServicer):
 
 
 def serve():
-    transferType = os.getenv('TRANSFER_TYPE', S3)
-    if transferType == S3:
+    transferType = os.getenv('TRANSFER_TYPE', DOCKER_VOLUME)
+    if transferType == S3 or transferType == DOCKER_VOLUME or transferType == INLINE:
         global storageBackend
-        storageBackend = Storage(BUCKET_NAME)
+        if transferType == DOCKER_VOLUME:
+            storageBackend = Storage(DOCKER_VOLUME)
+        elif transferType == S3:
+            storageBackend = Storage(BUCKET_NAME)
         log.info("Using inline or s3 transfers")
-        max_workers = int(os.getenv("MAX_SERVER_THREADS", 10))
+        max_workers = int(os.getenv("MAX_SERVER_THREADS", 2))
         server = grpc.server(futures.ThreadPoolExecutor(max_workers=max_workers))
         helloworld_pb2_grpc.add_GreeterServicer_to_server(
             GreeterServicer(transferType=transferType), server)
         SERVICE_NAMES = (
             helloworld_pb2.DESCRIPTOR.services_by_name['Greeter'].full_name,
-            reflection.SERVICE_NAME,
+            # reflection.SERVICE_NAME,
         )
         reflection.enable_server_reflection(SERVICE_NAMES, server)
         server.add_insecure_port('[::]:' + args.sp)
+        log.info("Listening on port: " + args.sp)
         server.start()
         server.wait_for_termination()
     elif transferType == XDT:

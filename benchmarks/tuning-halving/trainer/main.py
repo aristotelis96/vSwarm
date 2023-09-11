@@ -47,9 +47,9 @@ import tracing
 from storage import Storage
 import tuning_pb2_grpc
 import tuning_pb2
-import destination as XDTdst
-import source as XDTsrc
-import utils as XDTutil
+# import destination as XDTdst
+# import source as XDTsrc
+# import utils as XDTutil
 
 
 
@@ -72,6 +72,7 @@ if tracing.IsTracingEnabled():
 INLINE = "INLINE"
 S3 = "S3"
 XDT = "XDT"
+DOCKER_VOLUME = "DOCKER_VOLUME"
 storageBackend = None
 
 # set aws credentials:
@@ -128,7 +129,10 @@ class TrainerServicer(tuning_pb2_grpc.TrainerServicer):
 
     def Train(self, request, context):
         # Read from S3
-        dataset = pickle.loads(storageBackend.get(request.dataset_key))
+        if self.transferType != INLINE:
+            dataset = pickle.loads(storageBackend.get(request.dataset_key))
+        else:
+            dataset = pickle.loads(request.dataset)
 
         with tracing.Span("Training a model"):
             model_config = pickle.loads(request.model_config)
@@ -169,10 +173,13 @@ class TrainerServicer(tuning_pb2_grpc.TrainerServicer):
 
 
 def serve():
-    transferType = os.getenv('TRANSFER_TYPE', S3)
-    if transferType == S3:
+    transferType = os.getenv('TRANSFER_TYPE', DOCKER_VOLUME)
+    if transferType == S3 or transferType == DOCKER_VOLUME or transferType == INLINE:
         global storageBackend
-        storageBackend = Storage(BUCKET_NAME)
+        if transferType == DOCKER_VOLUME:
+            storageBackend = Storage(DOCKER_VOLUME)
+        elif transferType == S3:
+            storageBackend = Storage(BUCKET_NAME)
         log.info("Using inline or s3 transfers")
         max_workers = int(os.getenv("MAX_SERVER_THREADS", 10))
         server = grpc.server(futures.ThreadPoolExecutor(max_workers=max_workers))
