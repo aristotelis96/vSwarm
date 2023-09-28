@@ -29,6 +29,8 @@ import (
 	"bytes"
 	"context"
 	"os"
+	"io/ioutil"
+	"io"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials"
@@ -40,10 +42,11 @@ import (
 )
 
 const (
-	TOKEN       = ""
-	XDT         = "XDT"
-	S3          = "S3"
-	ELASTICACHE = "ELASTICACHE"
+	TOKEN       	= ""
+	XDT         	= "XDT"
+	S3          	= "S3"
+	ELASTICACHE 	= "ELASTICACHE"
+	DOCKER_VOLUME 	= "DOCKER_VOLUME"
 )
 
 type Storage struct {
@@ -64,7 +67,9 @@ func New(transferType string, bucketName string) Storage {
 	var redisClient *redis.Client
 	var s3session *session.Session
 	var AWS_REGION, AWS_ACCESS_KEY, AWS_SECRET_KEY string
-	if transferType == S3 {
+	if transferType == DOCKER_VOLUME {
+
+	} else if transferType == S3 {
 		AWS_REGION = "us-west-1"
 		awsRegion, ok := os.LookupEnv("AWS_REGION")
 		if ok {
@@ -112,7 +117,15 @@ func New(transferType string, bucketName string) Storage {
 
 // Put uploads the payload to the storage service using the provided key
 func (s Storage) Put(ctx context.Context, key string, payloadData []byte) string {
-	if s.transferType == S3 {
+	log.Infof("%s\n", s.transferType)
+	if s.transferType == DOCKER_VOLUME {
+		filePath := "/data/" + key
+		err := ioutil.WriteFile(filePath, payloadData, 0644)
+		if err != nil {
+			log.Fatalf("Error:", err)
+		}
+		return key
+	} else if s.transferType == S3 {
 		log.Infof("Uploading %d bytes to s3", len(payloadData))
 		uploader := s3manager.NewUploader(s.s3session)
 		reader := bytes.NewReader(payloadData)
@@ -142,7 +155,21 @@ func (s Storage) Put(ctx context.Context, key string, payloadData []byte) string
 
 // PutFile uploads the payload to the storage service using the provided key
 func (s Storage) PutFile(key string, file *os.File) string {
-	if s.transferType == S3 {
+	if s.transferType == DOCKER_VOLUME {
+		log.Infof("Uploading file to volume")
+		destination, err := os.Create("/data/" + key)
+		if err != nil {
+			return err.Error()
+		}
+		defer destination.Close()
+
+		_, err = io.Copy(destination, file)
+		if err != nil {
+			log.Fatalf("Failed to copy file to volume")
+			return err.Error()
+		}
+		return key
+	} else if s.transferType == S3 {
 		log.Infof("Uploading file to s3")
 		uploader := s3manager.NewUploader(s.s3session)
 		_, err := uploader.Upload(&s3manager.UploadInput{
@@ -167,7 +194,16 @@ func (s Storage) PutFile(key string, file *os.File) string {
 // Get retrieves a payload corresponding to the provided key from the storage service.
 // An error will occur if the key is not prescent on the service.
 func (s Storage) Get(ctx context.Context, key string) []byte {
-	if s.transferType == S3 {
+	if s.transferType == DOCKER_VOLUME {
+		filePath := "/data/" + key
+
+		loadedData, err := ioutil.ReadFile(filePath)
+		if err != nil {
+			log.Fatalf(err.Error())
+		}
+		
+		return loadedData
+	} else if s.transferType == S3 {
 		log.Infof("Fetching %s from S3", key)
 		downloader := s3manager.NewDownloader(s.s3session)
 		buf := aws.NewWriteAtBuffer([]byte{})

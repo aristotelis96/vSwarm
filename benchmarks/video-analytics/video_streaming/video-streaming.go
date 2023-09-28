@@ -38,8 +38,6 @@ import (
 
 	pb_video "tests/video_analytics/proto"
 
-	sdk "github.com/ease-lab/vhive-xdt/sdk/golang"
-	"github.com/ease-lab/vhive-xdt/utils"
 	pb_helloworld "github.com/vhive-serverless/vSwarm/examples/protobuf/helloworld"
 
 	storage "github.com/vhive-serverless/vSwarm/utils/storage/go"
@@ -53,17 +51,17 @@ var (
 )
 
 const (
-	INLINE = "INLINE"
-	XDT    = "XDT"
-	S3     = "S3"
+	INLINE        = "INLINE"
+	XDT           = "XDT"
+	S3            = "S3"
+	DOCKER_VOLUME = "DOCKER_VOLUME"
 )
 
 type server struct {
-	decoderAddr    string
-	decoderPort    int
-	transferType   string
-	config         utils.Config
-	XDTclient      *sdk.XDTclient
+	decoderAddr  string
+	decoderPort  int
+	transferType string
+	// config         utils.Config
 	storageBackend storage.Storage
 	pb_helloworld.UnimplementedGreeterServer
 }
@@ -83,6 +81,16 @@ func fetchSelfIP() string {
 	}
 	log.Errorf("unable to find IP, returning empty string")
 	return ""
+}
+
+func uploadToVolume(ctx context.Context, storageBackend storage.Storage) string {
+	file, err := os.Open(*videoFile)
+	if err != nil {
+		log.Fatalf("[Video Streaming] Failed to open file: %s", err)
+	}
+	key := storageBackend.PutFile("streaming-video.mp4", file)
+	log.Infof("[Video Streaming] Uploaded to volume")
+	return key
 }
 
 func uploadToS3(ctx context.Context, storageBackend storage.Storage) {
@@ -112,16 +120,16 @@ func (s *server) SayHello(ctx context.Context, req *pb_helloworld.HelloRequest) 
 	var reply *pb_video.DecodeReply
 	var response string
 	if s.transferType == XDT {
-		payloadToSend := utils.Payload{
-			FunctionName: "HelloXDT",
-			Data:         videoFragment,
-		}
-		if message, _, err := (*s.XDTclient).Invoke(ctx, addr, payloadToSend); err != nil {
-			log.Fatalf("SQP_to_dQP_data_transfer failed %v", err)
-		} else {
-			response = string(message)
-		}
-	} else if s.transferType == S3 || s.transferType == INLINE {
+		// payloadToSend := utils.Payload{
+		// 	FunctionName: "HelloXDT",
+		// 	Data:         videoFragment,
+		// }
+		// if message, _, err := (*s.XDTclient).Invoke(ctx, addr, payloadToSend); err != nil {
+		// 	log.Fatalf("SQP_to_dQP_data_transfer failed %v", err)
+		// } else {
+		// 	response = string(message)
+		// }
+	} else if s.transferType == S3 || s.transferType == INLINE || s.transferType == DOCKER_VOLUME {
 		var conn *grpc.ClientConn
 		if tracing.IsTracingEnabled() {
 			conn, err = tracing.DialGRPCWithUnaryInterceptor(addr, grpc.WithBlock(), grpc.WithTransportCredentials(insecure.NewCredentials()))
@@ -139,7 +147,10 @@ func (s *server) SayHello(ctx context.Context, req *pb_helloworld.HelloRequest) 
 			uploadToS3(ctx, s.storageBackend)
 			// issue request
 			reply, err = client.Decode(ctx, &pb_video.DecodeRequest{S3Key: "streaming-video.mp4"})
-		} else {
+		} else if s.transferType == DOCKER_VOLUME {
+			uploadToVolume(ctx, s.storageBackend)
+			reply, err = client.Decode(ctx, &pb_video.DecodeRequest{S3Key: "streaming-video.mp4"})
+		} else if s.transferType == INLINE {
 			reply, err = client.Decode(ctx, &pb_video.DecodeRequest{Video: videoFragment})
 		}
 		if err != nil {
@@ -156,8 +167,8 @@ func (s *server) SayHello(ctx context.Context, req *pb_helloworld.HelloRequest) 
 
 func main() {
 	debug := flag.Bool("d", false, "Debug level in logs")
-	dockerCompose := flag.Bool("dockerCompose", false, "Execution env")
-	decoderAddr := flag.String("addr", "decoder.default.svc.cluster.local", "Decoder address")
+	// dockerCompose := flag.Bool("dockerCompose", false, "Execution env")
+	decoderAddr := flag.String("addr", "decoder.default.192.168.254.254.sslip.io", "Decoder address")
 	decoderPort := flag.Int("p", 80, "Decoder port")
 	servePort := flag.Int("sp", 80, "Port listened to by this streamer")
 	videoFile = flag.String("video", "reference/video.mp4", "The file location of the video")
@@ -208,8 +219,10 @@ func main() {
 	} else {
 		server.transferType = transferType
 	}
-
-	if server.transferType == S3 {
+	if server.transferType == DOCKER_VOLUME {
+		storageBackend := storage.New("DOCKER_VOLUME", "")
+		server.storageBackend = storageBackend
+	} else if server.transferType == S3 {
 		if value, ok := os.LookupEnv("BUCKET_NAME"); ok {
 			AWS_S3_BUCKET = value
 		}
@@ -217,20 +230,20 @@ func main() {
 		storageBackend := storage.New("S3", AWS_S3_BUCKET)
 		server.storageBackend = storageBackend
 	} else if server.transferType == XDT {
-		log.Infof("[streaming] TransferType = %s", server.transferType)
-		config := utils.ReadConfig()
-		log.Info(config)
-		if !*dockerCompose {
-			config.SQPServerHostname = fetchSelfIP()
-		}
-		xdtClient, err := sdk.NewXDTclient(config)
-		if err != nil {
-			log.Fatalf("InitXDT failed %v", err)
-		}
+		// log.Infof("[streaming] TransferType = %s", server.transferType)
+		// config := utils.ReadConfig()
+		// log.Info(config)
+		// if !*dockerCompose {
+		// 	config.SQPServerHostname = fetchSelfIP()
+		// }
+		// xdtClient, err := sdk.NewXDTclient(config)
+		// if err != nil {
+		// 	log.Fatalf("InitXDT failed %v", err)
+		// }
 
-		server.config = config
-		server.XDTclient = xdtClient
-		log.Infof("[streaming] XDT client created")
+		// server.config = config
+		// server.XDTclient = xdtClient
+		// log.Infof("[streaming] XDT client created")
 	}
 	pb_helloworld.RegisterGreeterServer(grpcServer, &server)
 
